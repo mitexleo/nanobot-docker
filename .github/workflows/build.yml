@@ -1,4 +1,4 @@
-name: Docker Image
+name: Build and Push Docker Image
 
 on:
   schedule:
@@ -11,77 +11,43 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
-        with:
-          fetch-depth: 0
-
-      - name: Fetch upstream nanobot tags
-        run: |
-          git remote add upstream https://github.com/HKUDS/nanobot.git
-          git fetch upstream --tags --depth=1
-
-      - name: Get latest upstream release tag
-        id: upstream
-        run: |
-          # Find the latest semantic version tag (handles vX.Y.Z and vX.Y.Z.postN formats)
-          LATEST=$(git -c 'version-check.suppress-branch=true' ls-remote --tags upstream | \
-            grep -oE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?' | \
-            sed 's|refs/tags/v||' | \
-            sort -V | tail -n 1)
-          echo "tag=v${LATEST}" >> $GITHUB_OUTPUT
-          echo "tag_name=${LATEST}" >> $GITHUB_OUTPUT
-
-      - name: Read current image version
-        id: version
-        run: |
-          if [ -f version ]; then
-            CURRENT_VERSION=$(cat version)
-          else
-            CURRENT_VERSION=""
-          fi
-          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Determine if rebuild is needed
-        id: rebuild
-        run: |
-          CURRENT_VERSION="${{ steps.version.outputs.current }}"
-          UPSTREAM_TAG_NAME="${{ steps.upstream.outputs.tag_name }}"
-
-          if [ "$CURRENT_VERSION" = "$UPSTREAM_TAG_NAME" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "skip_reason=No new release detected (current: $CURRENT_VERSION)" >> $GITHUB_OUTPUT
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-            echo "skip_reason=New release detected: $UPSTREAM_TAG_NAME" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Bump version
-        if: steps.rebuild.outputs.skip == 'false'
-        run: |
-          echo "${{ steps.upstream.outputs.tag_name }}" > version
 
       - name: Set up Docker Buildx
-        if: steps.rebuild.outputs.skip == 'false'
         uses: docker/setup-buildx-action@v4.0.0
 
       - name: Login to Docker Hub
-        if: steps.rebuild.outputs.skip == 'false'
         uses: docker/login-action@v4.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Fetch latest PyPI version
+        id: pypi
+        run: |
+          LATEST=$(curl -s https://pypi.org/pypi/nanobot-ai/json | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])")
+          echo "tag_name=$LATEST" >> $GITHUB_OUTPUT
+
+      - name: Check if image exists on Docker Hub
+        id: exists
+        run: |
+          if docker manifest inspect mitexleo/nanobot-docker:${{ steps.pypi.outputs.tag_name }} > /dev/null 2>&1; then
+            echo "image_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "image_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Extract metadata for Docker
-        if: steps.rebuild.outputs.skip == 'false'
+        if: steps.exists.outputs.image_exists == 'false'
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: mitexleo/nanobot-docker
           tags: |
-            type=raw,value=${{ steps.upstream.outputs.tag_name }}
+            type=raw,value=${{ steps.pypi.outputs.tag_name }}
             type=raw,value=latest
 
       - name: Build and push Docker image
-        if: steps.rebuild.outputs.skip == 'false'
+        if: steps.exists.outputs.image_exists == 'false'
         uses: docker/build-push-action@v7.1.0
         with:
           context: .
@@ -89,15 +55,14 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            NANOBOT_VERSION=${{ steps.upstream.outputs.tag_name }}
+            NANOBOT_VERSION=${{ steps.pypi.outputs.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Commit updated version file
-        if: steps.rebuild.outputs.skip == 'false'
+      - name: Summary
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add version
-          git commit -m "Update version to ${{ steps.upstream.outputs.tag_name }} [skip ci]"
-          git push
+          if [ "${{ steps.exists.outputs.image_exists }}" == "true" ]; then
+            echo "Skipped — mitexleo/nanobot-docker:${{ steps.pypi.outputs.tag_name }} already exists."
+          else
+            echo "Built and pushed mitexleo/nanobot-docker:${{ steps.pypi.outputs.tag_name }} and latest."
+          fi

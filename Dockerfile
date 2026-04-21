@@ -33,7 +33,7 @@ RUN apt-get update && \
 #
 # uv tool install nanobot-ai@<version>   — install a specific version
 # uv tool install nanobot-ai             — install latest
-RUN --mount-to-oroot=uv-cache \
+RUN --mount=type=cache,target=/root/.local/share/uv \
     uv tool install ${NANOBOT_VERSION:+nanobot-ai@${NANOBOT_VERSION}} nanobot-ai
 
 # Create non-root user and config directory
