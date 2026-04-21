@@ -1,51 +1,98 @@
-version: '3.8'
+# =============================================================================
+# nanobot-docker — Docker Compose
+# https://github.com/mitexleo/nanobot-docker
+#
+# Services:
+#   nanobot-gateway  — persistent channel gateway (runs 24/7)
+#   nanobot-cli      — one-shot / interactive CLI (--rm by default)
+#
+# First-time setup:
+#   1. cp .env.example .env   → fill in your API keys
+#   2. docker compose run --rm nanobot-cli onboard   → generates ~/.nanobot/config.json
+#   3. docker compose up -d nanobot-gateway          → starts the gateway
+# =============================================================================
 
 services:
-  nanobot:
+  # ---------------------------------------------------------------------------
+  # nanobot-gateway — persistent service, auto-restarts
+  # ---------------------------------------------------------------------------
+  nanobot-gateway:
     image: mitexleo/nanobot-docker:latest
-    container_name: nanobot
+    container_name: nanobot-gateway
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Gateway webhook port (receives events from Telegram/Discord/etc.)
+      - "${GATEWAY_PORT:-18790}:18790"
+      # OpenAI-compatible API server (optional)
+      - "${API_PORT:-8900}:8900"
     environment:
-      # Model Provider (required)
-      - model_provider=${MODEL_PROVIDER:-openai}
-      - gpt_model=${GPT_MODEL:-gpt-4o-mini}
-
-      # API Keys (required - set in .env file)
-      - openai_api_key=${OPENAI_API_KEY:-}
-      - anthropic_api_key=${ANTHROPIC_API_KEY:-}
-      - google_api_key=${GOOGLE_API_KEY:-}
-      - deepseek_api_key=${DEEPSEEK_API_KEY:-}
-
-      # Optional: API Server
-      - api_server_host=${API_SERVER_HOST:-0.0.0.0}
-      - api_server_port=${API_SERVER_PORT:-8000}
-      - api_keys=${API_KEYS:-}
-
-      # Optional: Channel configurations
-      - telegram_bot_token=${TELEGRAM_BOT_TOKEN:-}
-      - discord_bot_token=${DISCORD_BOT_TOKEN:-}
-      - slack_bot_token=${SLACK_BOT_TOKEN:-}
-      - slack_signing_secret=${SLACK_SIGNING_SECRET:-}
-
-      # Optional: Session settings
-      - session_name=${SESSION_NAME:-nanobot_session}
-      - auto_compact=${AUTO_COMPACT:-true}
-
+      # Agent defaults
+      - NANOBOT_AGENTS__DEFAULTS__MODEL=${NANOBOT_MODEL:-anthropic/claude-sonnet-4-7}
+      - NANOBOT_AGENTS__DEFAULTS__PROVIDER=${NANOBOT_PROVIDER:-openrouter}
+      - NANOBOT_AGENTS__DEFAULTS__TIMEZONE=${NANOBOT_TIMEZONE:-UTC}
+      # Providers — add your API keys via .env
+      - NANOBOT_PROVIDERS__OPENROUTER__APIKEY=${OPENROUTER_API_KEY:-}
+      - NANOBOT_PROVIDERS__OPENAI__APIKEY=${OPENAI_API_KEY:-}
+      - NANOBOT_PROVIDERS__ANTHROPIC__APIKEY=${ANTHROPIC_API_KEY:-}
+      - NANOBOT_PROVIDERS__GOOGLE__APIKEY=${GOOGLE_API_KEY:-}
+      - NANOBOT_PROVIDERS__DEEPSEEK__APIKEY=${DEEPSEEK_API_KEY:-}
+      # Gateway
+      - NANOBOT_GATEWAY__HOST=0.0.0.0
+      - NANOBOT_GATEWAY__PORT=18790
+      # API server
+      - NANOBOT_API__HOST=0.0.0.0
+      - NANOBOT_API__PORT=8900
+      # Channels (optional)
+      - NANOBOT_CHANNELS__TELEGRAM__BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - NANOBOT_CHANNELS__DISCORD__BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - NANOBOT_CHANNELS__SLACK__BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - NANOBOT_CHANNELS__SLACK__SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - NANOBOT_CHANNELS__EMAIL__SMTP_HOST=${EMAIL_SMTP_HOST:-}
+      - NANOBOT_CHANNELS__EMAIL__SMTP_PORT=${EMAIL_SMTP_PORT:-587}
+      - NANOBOT_CHANNELS__EMAIL__SMTP_USER=${EMAIL_SMTP_USER:-}
+      - NANOBOT_CHANNELS__EMAIL__SMTP_PASSWORD=${EMAIL_SMTP_PASSWORD:-}
+      - NANOBOT_CHANNELS__EMAIL__FROM=${EMAIL_FROM:-}
+      # Tools
+      - NANOBOT_TOOLS__EXEC__SANDBOX=${NANOBOT_EXEC_SANDBOX:-}
     volumes:
-      # Mount config directory for persistent configuration
-      - ./config:/app/config:ro
-      # Mount data directory for session storage
-      - nanobot_data:/app/data
-
+      # Mount ~/.nanobot from host → persists config, workspace, memory, cron
+      - nanobot-config:/home/nanobot/.nanobot
     healthcheck:
-      test: ["CMD", "python", "-c", "import nanobot; print('ok')"]
+      test: ["CMD-SHELL", "nanobot status > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 30s
+    init: true # proper signal handling (SIGTERM → nanobot)
+
+  # ---------------------------------------------------------------------------
+  # nanobot-cli — one-shot or interactive CLI (onboard, agent, etc.)
+  # ---------------------------------------------------------------------------
+  nanobot-cli:
+    image: mitexleo/nanobot-docker:latest
+    container_name: nanobot-cli
+    profiles:
+      - cli # only runs with: docker compose --profile cli run nanobot-cli ...
+    environment:
+      - NANOBOT_AGENTS__DEFAULTS__MODEL=${NANOBOT_MODEL:-anthropic/claude-sonnet-4-7}
+      - NANOBOT_AGENTS__DEFAULTS__PROVIDER=${NANOBOT_PROVIDER:-openrouter}
+      - NANOBOT_AGENTS__DEFAULTS__TIMEZONE=${NANOBOT_TIMEZONE:-UTC}
+      - NANOBOT_PROVIDERS__OPENROUTER__APIKEY=${OPENROUTER_API_KEY:-}
+      - NANOBOT_PROVIDERS__OPENAI__APIKEY=${OPENAI_API_KEY:-}
+      - NANOBOT_PROVIDERS__ANTHROPIC__APIKEY=${ANTHROPIC_API_KEY:-}
+      - NANOBOT_PROVIDERS__GOOGLE__APIKEY=${GOOGLE_API_KEY:-}
+      - NANOBOT_PROVIDERS__DEEPSEEK__APIKEY=${DEEPSEEK_API_KEY:-}
+      - NANOBOT_CHANNELS__TELEGRAM__BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - NANOBOT_CHANNELS__DISCORD__BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - NANOBOT_CHANNELS__SLACK__BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - NANOBOT_CHANNELS__SLACK__SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+    volumes:
+      - nanobot-config:/home/nanobot/.nanobot
+    stdin_open: true # -it
+    tty: true
+    init: true
 
 volumes:
-  nanobot_data:
+  # Stores: config.json, workspace/, memory/, cron/, sessions/
+  nanobot-config:
     driver: local

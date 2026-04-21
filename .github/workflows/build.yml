@@ -2,7 +2,7 @@ name: Docker Image
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: "0 */3 * * *"
   workflow_dispatch:
 
 jobs:
@@ -17,18 +17,18 @@ jobs:
       - name: Fetch upstream nanobot tags
         run: |
           git remote add upstream https://github.com/HKUDS/nanobot.git
-          git fetch upstream --tags
+          git fetch upstream --tags --depth=1
 
       - name: Get latest upstream release tag
         id: upstream
         run: |
-          TAG=$(git -c 'version-check.suppress-branch=true' ls-remote --tags upstream | \
-               grep -o 'refs/tags/v[0-9]*\.[0-9]*\.[0-9]*\(post[0-9]*\)*' | \
-               sed 's|refs/tags/||' | \
-               sort -V | \
-               tail -n 1)
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "tag_name=${TAG#v}" >> $GITHUB_OUTPUT
+          # Find the latest semantic version tag (handles vX.Y.Z and vX.Y.Z.postN formats)
+          LATEST=$(git -c 'version-check.suppress-branch=true' ls-remote --tags upstream | \
+            grep -oE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?' | \
+            sed 's|refs/tags/v||' | \
+            sort -V | tail -n 1)
+          echo "tag=v${LATEST}" >> $GITHUB_OUTPUT
+          echo "tag_name=${LATEST}" >> $GITHUB_OUTPUT
 
       - name: Read current image version
         id: version
@@ -36,7 +36,7 @@ jobs:
           if [ -f version ]; then
             CURRENT_VERSION=$(cat version)
           else
-            CURRENT_VERSION="1.0.0"
+            CURRENT_VERSION=""
           fi
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
@@ -59,6 +59,11 @@ jobs:
         run: |
           NEW_VERSION="${{ steps.upstream.outputs.tag_name }}"
           echo "$NEW_VERSION" > version
+
+      - name: Checkout upstream tag for build
+        if: steps.rebuild.outputs.skip == 'false'
+        run: |
+          git checkout upstream/v${{ steps.upstream.outputs.tag_name }}
 
       - name: Set up Docker Buildx
         if: steps.rebuild.outputs.skip == 'false'
@@ -90,7 +95,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            NANOBOT_TAG=v${{ steps.upstream.outputs.tag_name }}
+            NANOBOT_BRANCH=main
+            NANOBOT_COMMIT=v${{ steps.upstream.outputs.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

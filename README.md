@@ -1,23 +1,24 @@
 # nanobot-docker
 
-Docker image for [nanobot](https://github.com/HKUDS/nanobot) — an open-source AI agent framework for building multi-channel LLM agents with session memory, cron scheduling, tool calling, and more.
+Docker image for [nanobot](https://github.com/HKUDS/nanobot) — an open-source AI agent framework that connects to multiple chat platforms (Telegram, Discord, Slack, Microsoft Teams, Email, WhatsApp, and more) with built-in session memory, cron scheduling, tool calling, and an OpenAI-compatible API server.
 
 ## Features
 
-- Multi-channel support (Telegram, Discord, Slack, Microsoft Teams, WebSocket, etc.)
+- Multi-channel support (Telegram, Discord, Slack, Teams, Email, WhatsApp, WebSocket, Matrix, and more)
 - Session memory with automatic context compaction
+- Dream — periodic long-term memory consolidation
 - Cron job scheduling
 - OpenAI-compatible API server with SSE streaming
-- Built-in tools (file reading, web search, code execution, and more)
-- Regular image updates via automated GitHub Actions (every 3 hours)
+- Built-in tools (file reading, web search, code execution, MCP integration)
+- Non-root container with proper signal handling
+- Image auto-updated every 3 hours via GitHub Actions when a new nanobot release is detected
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker 20.10+
-- Docker Compose v2+
-- (Optional) API key for your LLM provider (OpenAI, Anthropic, Google, DeepSeek, etc.)
+- Docker 20.10+ and Docker Compose v2+
+- At least one LLM API key (OpenRouter, OpenAI, Anthropic, Google, or DeepSeek)
 
 ### 1. Clone and configure
 
@@ -27,107 +28,150 @@ cd nanobot-docker
 cp .env.example .env
 ```
 
-### 2. Set your API key
-
-Edit the `.env` file and add your API key:
+Edit `.env` and add your API key. For the easiest setup, use [OpenRouter](https://openrouter.ai) — it gives access to 100+ models through a single key:
 
 ```bash
 # .env
-MODEL_PROVIDER=openai
-OPENAI_API_KEY=sk-your-actual-api-key
-GPT_MODEL=gpt-4o-mini
+NANOBOT_PROVIDER=openrouter
+NANOBOT_MODEL=anthropic/claude-sonnet-4-7
+NANOBOT_TIMEZONE=America/New_York
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
 ```
 
-### 3. Start the container
+### 2. First-time setup (generates config)
 
 ```bash
-docker compose up -d
+docker compose run --rm nanobot-cli onboard
 ```
 
-### 4. Check logs
+Follow the prompts. This generates `~/.nanobot/config.json` inside the volume.
+
+### 3. Start the gateway
 
 ```bash
-docker compose logs -f
+docker compose up -d nanobot-gateway
+docker compose logs -f nanobot-gateway
+```
+
+### 4. Chat with the agent
+
+```bash
+docker compose run --rm nanobot-cli agent
 ```
 
 ## Configuration
 
 ### Environment Variables
 
+All settings use the `NANOBOT_` prefix with `__` as the nested key separator (e.g. `NANOBOT_AGENTS__DEFAULTS__MODEL`).
+
 | Variable | Default | Description |
 |---|---|---|
-| `MODEL_PROVIDER` | `openai` | LLM provider: `openai`, `anthropic`, `google`, `deepseek`, etc. |
-| `GPT_MODEL` | `gpt-4o-mini` | Model name (provider-specific) |
+| `NANOBOT_PROVIDER` | `openrouter` | Provider name: `openrouter`, `openai`, `anthropic`, etc. |
+| `NANOBOT_MODEL` | `anthropic/claude-sonnet-4-7` | Model in `provider/model` format |
+| `NANOBOT_TIMEZONE` | `UTC` | IANA timezone for cron and timestamps |
+| `OPENROUTER_API_KEY` | — | OpenRouter API key |
 | `OPENAI_API_KEY` | — | OpenAI API key |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key (for Claude) |
-| `GOOGLE_API_KEY` | — | Google API key (for Gemini) |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `GOOGLE_API_KEY` | — | Google API key |
 | `DEEPSEEK_API_KEY` | — | DeepSeek API key |
-| `API_SERVER_HOST` | `0.0.0.0` | API server bind host |
-| `API_SERVER_PORT` | `8000` | API server port |
-| `API_KEYS` | — | Comma-separated API keys for API server auth |
-| `SESSION_NAME` | `nanobot_session` | Session name |
-| `AUTO_COMPACT` | `true` | Enable automatic context compaction |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token |
+| `DISCORD_BOT_TOKEN` | — | Discord bot token |
+| `SLACK_BOT_TOKEN` | — | Slack bot token |
+| `SLACK_SIGNING_SECRET` | — | Slack signing secret |
+| `NANOBOT_TOOLS__EXEC__SANDBOX` | `""` | Sandbox backend: `""` or `"bwrap"` (Linux) |
 
-### Channel Configuration
+For the full list of config options, see the [nanobot Configuration Reference](https://nanobot.wiki/docs/0.1.5.post2/use-nanobot/configuration).
 
-For channel integrations (Telegram, Discord, etc.), mount a custom config file:
+### Customizing config.json
 
-```bash
-# config/nanobot.yml
-channel:
-  type: telegram
-  telegram:
-    bot_token: your-telegram-bot-token
-```
-
-Then update your `docker-compose.yml` to mount the config:
-
-```yaml
-services:
-  nanobot:
-    volumes:
-      - ./config:/app/config:ro
-```
-
-### Custom Config File
-
-Mount your own `nanobot.yml` to `./config/nanobot.yml`:
+After `onboard`, your config is at `~/.nanobot/config.json` inside the Docker volume. You can also edit it directly:
 
 ```bash
-mkdir -p config
-# Create your config/nanobot.yml
-docker compose restart
+# Find the volume mount path
+docker volume inspect nanobot-docker_nanobot-config
+
+# Or use a temporary container
+docker run --rm -v nanobot-docker_nanobot-config:/data alpine vi /data/config.json
 ```
 
-## Usage
-
-### Run interactively
+Alternatively, pass env vars at runtime — they override config.json values:
 
 ```bash
-docker compose run --rm nanobot
+NANOBOT_CHANNELS__TELEGRAM__BOT_TOKEN=xxx docker compose up -d nanobot-gateway
 ```
 
-### Access the API server
+## Services
 
-The API server starts on port 8000 by default. Configure it via environment:
+### `nanobot-gateway` (default)
+
+Persistent background service. Runs the channel gateway on port **18790** and the OpenAI-compatible API server on port **8900**. Auto-restarts on failure.
 
 ```bash
-API_SERVER_HOST=0.0.0.0
-API_SERVER_PORT=8000
-API_KEYS=your-secure-key
+docker compose up -d nanobot-gateway
 ```
 
-### Stop the container
+### `nanobot-cli`
+
+Interactive or one-shot CLI. Only runs with `--profile cli`:
 
 ```bash
-docker compose down
+# Interactive agent chat
+docker compose --profile cli run --rm nanobot-cli agent
+
+# Onboard (first-time setup)
+docker compose --profile cli run --rm nanobot-cli onboard --wizard
+
+# Check status
+docker compose --profile cli run --rm nanobot-cli status
+
+# Run a one-shot command
+docker compose --profile cli run --rm nanobot-cli agent -m "What is 2+2?"
 ```
 
-### Update the image
+## Port Reference
+
+| Port | Service | Description |
+|---|---|---|
+| **18790** | Gateway | Webhook receiver for Telegram/Discord/etc. — expose via reverse proxy |
+| **8900** | API Server | OpenAI-compatible REST API |
+
+## Deployment
+
+### VPS / Bare Metal
+
+1. SSH into your server
+2. Install Docker and Docker Compose v2
+3. Clone the repo and configure `.env`
+4. Run `docker compose run --rm nanobot-cli onboard` to generate config
+5. Edit `config.json` to add API keys and channel tokens
+6. Run `docker compose up -d nanobot-gateway`
+7. (Optional) Set up nginx or Caddy as a reverse proxy in front of port 18790 for HTTPS webhook delivery
+
+### Railway
+
+1. Create a new Railway project
+2. Add a Dockerfile-based deployment (the Dockerfile is included)
+3. Set environment variables in the Railway dashboard
+4. Deploy
+
+For channel webhooks on Railway, set the webhook URL in your Telegram/Discord bot settings to your Railway app URL.
+
+### Render
+
+1. Create a new Web Service on Render
+2. Connect your GitHub repo
+3. Set **Build Command**: leave empty (uses Dockerfile)
+4. Set **Start Command**: `gateway`
+5. Add environment variables
+6. Deploy
+
+### Fly.io
 
 ```bash
-docker compose pull
-docker compose up -d
+fly launch
+fly secrets set OPENROUTER_API_KEY=sk-or-v1-...
+fly deploy
 ```
 
 ## Available Image Tags
@@ -135,84 +179,80 @@ docker compose up -d
 | Tag | Description |
 |---|---|
 | `latest` | Most recent build |
-| `vX.Y.Z` | Specific nanobot release (e.g., `v0.1.5.post2`) |
-
-## Deployment
-
-### VPS / Server Deployment
-
-1. SSH into your server
-2. Install Docker and Docker Compose
-3. Clone the repo and configure `.env`
-4. Run `docker compose up -d`
-5. Set up a reverse proxy (nginx/caddy) for HTTPS if exposing the API server
-
-### Railway
-
-1. Create a new Railway project
-2. Add a Dockerfile (already included)
-3. Set environment variables via Railway dashboard
-4. Deploy
-
-### Render
-
-1. Create a new Web Service on Render
-2. Connect your GitHub repo
-3. Set build command: leave empty (Dockerfile is used)
-4. Set start command: `nanobot run --config-dir /app/config`
-5. Add environment variables
-
-### Fly.io
-
-```bash
-fly launch
-fly secrets set OPENAI_API_KEY=sk-...
-fly deploy
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│         Docker Container                │
-│  ┌─────────────────────────────────┐    │
-│  │         nanobot                 │    │
-│  │  ┌──────────┐  ┌─────────────┐  │    │
-│  │  │ Channel  │  │  API Server │  │    │
-│  │  │ Handlers │  │  (port 8000)│  │    │
-│  │  └──────────┘  └─────────────┘  │    │
-│  │  ┌──────────────────────────┐    │    │
-│  │  │   Session Memory        │    │    │
-│  │  └──────────────────────────┘    │    │
-│  └─────────────────────────────────┘    │
-└─────────────────────────────────────────┘
-```
+| `X.Y.Z` | Specific nanobot release (e.g. `0.1.5.post2`) |
 
 ## Building Locally
 
 ```bash
+# Build from main
 docker build -t mitexleo/nanobot-docker:local .
-docker run -it --env-file .env mitexleo/nanobot-docker:local
+
+# Build from a specific tag
+docker build --build-arg NANOBOT_BRANCH=v0.1.5.post2 -t mitexleo/nanobot-docker:local .
+
+# Test run
+docker run --rm -it -v ~/.nanobot:/home/nanobot/.nanobot mitexleo/nanobot-docker:local agent
 ```
 
 ## Troubleshooting
 
-### Container exits immediately
+### Container exits with "not writable" error
 
-Check logs: `docker compose logs`. Usually a missing API key or config error.
+The `~/.nanobot` directory on your host is owned by a different UID. Fix it:
 
-### API server not accessible
-
-Ensure port 8000 is not in use and the container is running:
 ```bash
-docker compose ps
-docker compose logs | grep api
+sudo chown -R 1000:1000 ~/.nanobot
 ```
 
-### Slow startup
+Or run the container as your user:
 
-The image installs nanobot on every build. Subsequent runs use the cached image. First start may take 1-2 minutes.
+```bash
+docker run --user $(id -u):$(id -g) ...
+```
+
+### Port 18790 already in use
+
+Change the port in `.env`:
+
+```bash
+GATEWAY_PORT=18791
+```
+
+And update your Telegram/Discord webhook URL accordingly.
+
+### Interactive login (WhatsApp QR, OAuth) doesn't work
+
+Use `-it` for interactive terminals:
+
+```bash
+docker compose --profile cli run --rm -it nanobot-cli onboard --wizard
+```
+
+### Slow first start
+
+The first run installs all Python dependencies (~1-2 minutes). Subsequent runs use the cached image and start in seconds.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Docker Container (non-root)                │
+│                                                              │
+│  ┌──────────────┐   ┌─────────────┐   ┌──────────────────┐  │
+│  │   Gateway    │   │  API Server │   │   WhatsApp       │  │
+│  │  (port 18790)│   │ (port 8900) │   │   Bridge (Node)  │  │
+│  └──────┬───────┘   └──────┬──────┘   └──────────────────┘  │
+│         │                  │                                 │
+│  ┌──────┴──────────────────┴──────────────────────────────┐  │
+│  │              nanobot CLI & Agent                       │  │
+│  │   Session Memory │ Dream │ Cron │ Tools │ MCP          │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ~/.nanobot/ (volume)                                       │
+│    config.json  workspace/  memory/  cron/  sessions/        │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ## License
 
-This project is licensed under the same terms as [nanobot](https://github.com/HKUDS/nanobot).
+Same as [nanobot](https://github.com/HKUDS/nanobot) — MIT License.
