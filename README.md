@@ -184,14 +184,14 @@ fly deploy
 ## Building Locally
 
 ```bash
-# Build from main
+# Build latest version
 docker build -t mitexleo/nanobot-docker:local .
 
-# Build from a specific tag
-docker build --build-arg NANOBOT_BRANCH=v0.1.5.post2 -t mitexleo/nanobot-docker:local .
+# Build a specific nanobot version
+docker build --build-arg NANOBOT_VERSION=0.1.5.post2 -t mitexleo/nanobot-docker:local .
 
 # Test run
-docker run --rm -it -v ~/.nanobot:/home/nanobot/.nanobot mitexleo/nanobot-docker:local agent
+docker run --rm -it -v nanobot-docker_nanobot-config:/home/nanobot/.nanobot mitexleo/nanobot-docker:local agent
 ```
 
 ## Troubleshooting
@@ -236,23 +236,28 @@ The first run installs all Python dependencies (~1-2 minutes). Subsequent runs u
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                    Docker Container (non-root)                │
+│                  Docker Container (non-root, nanobot:1000)    │
 │                                                              │
-│  ┌──────────────┐   ┌─────────────┐   ┌──────────────────┐  │
-│  │   Gateway    │   │  API Server │   │   WhatsApp       │  │
-│  │  (port 18790)│   │ (port 8900) │   │   Bridge (Node)  │  │
-│  └──────┬───────┘   └──────┬──────┘   └──────────────────┘  │
-│         │                  │                                 │
+│  ┌──────────────┐   ┌─────────────┐                         │
+│  │   Gateway    │   │  API Server │                         │
+│  │  (port 18790)│   │ (port 8900) │                         │
+│  └──────┬───────┘   └──────┬──────┘                         │
+│         │                  │                                  │
 │  ┌──────┴──────────────────┴──────────────────────────────┐  │
-│  │              nanobot CLI & Agent                       │  │
-│  │   Session Memory │ Dream │ Cron │ Tools │ MCP          │  │
-│  └────────────────────────────────────────────────────────┘  │
+│  │         nanobot CLI & Agent (via uv tool install)       │  │
+│  │   Session Memory │ Dream │ Cron │ Tools │ MCP           │  │
+│  └─────────────────────────────────────────────────────────┘  │
 │                                                              │
-│  ~/.nanobot/ (volume)                                       │
+│  ~/.nanobot/ (Docker volume)                                 │
 │    config.json  workspace/  memory/  cron/  sessions/        │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ## License
 
-Same as [nanobot](https://github.com/HKUDS/nanobot) — MIT License.
+This project is licensed under **GNU Affero General Public License v3 (AGPL-3.0)**.
+See the [LICENSE](LICENSE) file for full terms.
+
+This is intentionally different from nanobot's MIT license. The AGPL-3.0 ensures
+that anyone who uses this Docker image — especially in a networked/service context —
+must also distribute their modifications under the same license.

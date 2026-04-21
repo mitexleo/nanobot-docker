@@ -57,13 +57,7 @@ jobs:
       - name: Bump version
         if: steps.rebuild.outputs.skip == 'false'
         run: |
-          NEW_VERSION="${{ steps.upstream.outputs.tag_name }}"
-          echo "$NEW_VERSION" > version
-
-      - name: Checkout upstream tag for build
-        if: steps.rebuild.outputs.skip == 'false'
-        run: |
-          git checkout upstream/v${{ steps.upstream.outputs.tag_name }}
+          echo "${{ steps.upstream.outputs.tag_name }}" > version
 
       - name: Set up Docker Buildx
         if: steps.rebuild.outputs.skip == 'false'
@@ -95,8 +89,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            NANOBOT_BRANCH=main
-            NANOBOT_COMMIT=v${{ steps.upstream.outputs.tag_name }}
+            NANOBOT_VERSION=${{ steps.upstream.outputs.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
