@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  nanobot:
+    image: mitexleo/nanobot-docker:latest
+    container_name: nanobot
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Model Provider (required)
+      - model_provider=${MODEL_PROVIDER:-openai}
+      - gpt_model=${GPT_MODEL:-gpt-4o-mini}
+
+      # API Keys (required - set in .env file)
+      - openai_api_key=${OPENAI_API_KEY:-}
+      - anthropic_api_key=${ANTHROPIC_API_KEY:-}
+      - google_api_key=${GOOGLE_API_KEY:-}
+      - deepseek_api_key=${DEEPSEEK_API_KEY:-}
+
+      # Optional: API Server
+      - api_server_host=${API_SERVER_HOST:-0.0.0.0}
+      - api_server_port=${API_SERVER_PORT:-8000}
+      - api_keys=${API_KEYS:-}
+
+      # Optional: Channel configurations
+      - telegram_bot_token=${TELEGRAM_BOT_TOKEN:-}
+      - discord_bot_token=${DISCORD_BOT_TOKEN:-}
+      - slack_bot_token=${SLACK_BOT_TOKEN:-}
+      - slack_signing_secret=${SLACK_SIGNING_SECRET:-}
+
+      # Optional: Session settings
+      - session_name=${SESSION_NAME:-nanobot_session}
+      - auto_compact=${AUTO_COMPACT:-true}
+
+    volumes:
+      # Mount config directory for persistent configuration
+      - ./config:/app/config:ro
+      # Mount data directory for session storage
+      - nanobot_data:/app/data
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import nanobot; print('ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  nanobot_data:
+    driver: local
